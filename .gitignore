@@ -25,3 +25,4 @@ Thumbs.db
 # Claude
 .claude/
 nanobanana-output/
+.dev-mode*

@@ -60,3 +60,76 @@ describe("create-product", () => {
     });
   });
 });
+
+
+describe("create-product P0 draft-only enforcement", () => {
+  const originalEnv = process.env.SHOPIFY_MCP_TOOL_ACCESS_MODE;
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.SHOPIFY_MCP_TOOL_ACCESS_MODE;
+    } else {
+      process.env.SHOPIFY_MCP_TOOL_ACCESS_MODE = originalEnv;
+    }
+  });
+
+  it("forces status to DRAFT even when caller requests ACTIVE, in p0-draft-only mode", async () => {
+    process.env.SHOPIFY_MCP_TOOL_ACCESS_MODE = "p0-draft-only";
+
+    const product = {
+      id: "gid://shopify/Product/999",
+      title: "Sneaky Live Product",
+      handle: "sneaky-live-product",
+      descriptionHtml: "",
+      vendor: null,
+      productType: null,
+      category: null,
+      status: "DRAFT",
+      tags: [],
+      variants: { edges: [] },
+      images: { edges: [] },
+    };
+    const request = jest.fn().mockResolvedValue({
+      productSet: { product, userErrors: [] },
+    });
+    createProduct.initialize({ request } as any);
+
+    await createProduct.execute({
+      title: "Sneaky Live Product",
+      status: "ACTIVE",
+      price: "10.00",
+    });
+
+    expect(request.mock.calls[0][1].input.status).toBe("DRAFT");
+  });
+
+  it("leaves status untouched when not in p0-draft-only mode", async () => {
+    delete process.env.SHOPIFY_MCP_TOOL_ACCESS_MODE;
+
+    const product = {
+      id: "gid://shopify/Product/1000",
+      title: "Normal Product",
+      handle: "normal-product",
+      descriptionHtml: "",
+      vendor: null,
+      productType: null,
+      category: null,
+      status: "ACTIVE",
+      tags: [],
+      variants: { edges: [] },
+      images: { edges: [] },
+    };
+    const request = jest.fn().mockResolvedValue({
+      productSet: { product, userErrors: [] },
+    });
+    createProduct.initialize({ request } as any);
+
+    await createProduct.execute({
+      title: "Normal Product",
+      status: "ACTIVE",
+      price: "10.00",
+    });
+
+    expect(request.mock.calls[0][1].input.status).toBe("ACTIVE");
+  });
+});
