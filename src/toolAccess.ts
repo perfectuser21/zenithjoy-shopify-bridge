@@ -53,7 +53,19 @@ export const WRITE_TOOL_NAMES = new Set([
   "update-inventory-item-shipping",
 ]);
 
-export function parseReadOnlyMode(value: unknown): boolean {
+/**
+ * P0 draft-only allowlist: the full read-only set, plus "create-product"
+ * (the single mutation this deployment mode is scoped to). Draft-vs-live
+ * enforcement itself lives in createProduct.ts (status is forced to DRAFT
+ * when SHOPIFY_MCP_TOOL_ACCESS_MODE=p0-draft-only) — this allowlist only
+ * controls which tools are reachable at all.
+ */
+export const P0_DRAFT_ONLY_TOOL_NAMES = new Set([
+  ...READ_ONLY_TOOL_NAMES,
+  "create-product",
+]);
+
+function parseBooleanFlag(value: unknown, truthyStrings: string[]): boolean {
   if (value === true) {
     return true;
   }
@@ -62,7 +74,51 @@ export function parseReadOnlyMode(value: unknown): boolean {
     return false;
   }
 
-  return ["true", "1", "yes", "on"].includes(value.trim().toLowerCase());
+  return truthyStrings.includes(value.trim().toLowerCase());
+}
+
+export function parseReadOnlyMode(value: unknown): boolean {
+  return parseBooleanFlag(value, ["true", "1", "yes", "on"]);
+}
+
+/**
+ * Draft-only mode accepts the same truthy strings as read-only mode, plus
+ * the explicit mode name "p0-draft-only" (so SHOPIFY_MCP_TOOL_ACCESS_MODE
+ * can be set to either "true" or "p0-draft-only" interchangeably).
+ */
+export function parseDraftOnlyMode(value: unknown): boolean {
+  return parseBooleanFlag(value, ["true", "1", "yes", "on", "p0-draft-only"]);
+}
+
+/**
+ * Wrap an MCP server's tool registrar so only tool names present in
+ * `allowlist` can be registered. Fail-closed: anything not in the allowlist
+ * (including future tools not yet classified) is silently dropped.
+ */
+function wrapRegistrarWithAllowlist<T extends ToolServer>(
+  server: T,
+  allowlist: Set<string>,
+): T {
+  const wrapRegistrar = (key: ToolRegistrarKey): void => {
+    const registrar = server[key];
+    if (typeof registrar !== "function") {
+      return;
+    }
+
+    const registerTool = (registrar as ToolRegistrar).bind(server);
+    server[key] = ((name: string, ...args: unknown[]) => {
+      if (!allowlist.has(name)) {
+        return undefined;
+      }
+
+      return registerTool(name, ...args);
+    }) as T[typeof key];
+  };
+
+  wrapRegistrar("tool");
+  wrapRegistrar("registerTool");
+
+  return server;
 }
 
 /**
@@ -78,24 +134,26 @@ export function applyToolAccessPolicy<T extends ToolServer>(
     return server;
   }
 
-  const wrapRegistrar = (key: ToolRegistrarKey): void => {
-    const registrar = server[key];
-    if (typeof registrar !== "function") {
-      return;
-    }
+  const allowlist = new Set(
+    [...READ_ONLY_TOOL_NAMES].filter((name) => !WRITE_TOOL_NAMES.has(name)),
+  );
 
-    const registerTool = (registrar as ToolRegistrar).bind(server);
-    server[key] = ((name: string, ...args: unknown[]) => {
-      if (WRITE_TOOL_NAMES.has(name) || !READ_ONLY_TOOL_NAMES.has(name)) {
-        return undefined;
-      }
+  return wrapRegistrarWithAllowlist(server, allowlist);
+}
 
-      return registerTool(name, ...args);
-    }) as T[typeof key];
-  };
+/**
+ * Wrap an MCP server's tool registrar for P0 draft-only deployments: the
+ * read-only allowlist plus "create-product". Everything else — including
+ * update-product, delete-product, bulk-* mutations, and draft/live orders —
+ * is unreachable, regardless of how the caller invokes it.
+ */
+export function applyDraftOnlyToolAccessPolicy<T extends ToolServer>(
+  server: T,
+  enabled: boolean,
+): T {
+  if (!enabled) {
+    return server;
+  }
 
-  wrapRegistrar("tool");
-  wrapRegistrar("registerTool");
-
-  return server;
+  return wrapRegistrarWithAllowlist(server, P0_DRAFT_ONLY_TOOL_NAMES);
 }
