@@ -1,6 +1,7 @@
 import type { GraphQLClient } from "graphql-request";
 import { gql } from "graphql-request";
 import { z } from "zod";
+import { parseDraftOnlyMode } from "../toolAccess.js";
 
 // Variant schema for products with multiple options
 // Note: weight/weightUnit are not supported on ProductVariantSetInput - must be set via inventory item
@@ -111,9 +112,14 @@ const createProduct = {
       `;
 
       // Build the product input for productSet
+      // P0 draft-only deployments (SHOPIFY_MCP_TOOL_ACCESS_MODE=p0-draft-only) are
+      // scoped to creating drafts only — this is enforced here, not just at the
+      // tool-registration layer, so a caller cannot get a live product created by
+      // simply passing status:"ACTIVE" through create-product.
+      const draftOnly = parseDraftOnlyMode(process.env.SHOPIFY_MCP_TOOL_ACCESS_MODE);
       const productInput: Record<string, unknown> = {
         title: input.title,
-        status: input.status,
+        status: draftOnly ? "DRAFT" : input.status,
       };
 
       // Add optional basic fields

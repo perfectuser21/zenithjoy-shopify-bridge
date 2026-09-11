@@ -1,8 +1,11 @@
 import {
   READ_ONLY_TOOL_NAMES,
   WRITE_TOOL_NAMES,
+  P0_DRAFT_ONLY_TOOL_NAMES,
   applyToolAccessPolicy,
+  applyDraftOnlyToolAccessPolicy,
   parseReadOnlyMode,
+  parseDraftOnlyMode,
 } from "../src/toolAccess.js";
 
 describe("Shopify MCP read-only mode", () => {
@@ -86,5 +89,66 @@ describe("Shopify MCP read-only mode", () => {
     expect(READ_ONLY_TOOL_NAMES.has("create-file-upload-session")).toBe(false);
     expect(READ_ONLY_TOOL_NAMES.has("attach-file-to-product")).toBe(false);
     expect(READ_ONLY_TOOL_NAMES.has("start-bulk-export")).toBe(false);
+  });
+});
+
+describe("Shopify MCP P0 draft-only mode", () => {
+  it.each([
+    [true, true],
+    ["true", true],
+    ["p0-draft-only", true],
+    ["1", true],
+    [false, false],
+    [undefined, false],
+    ["false", false],
+    ["full", false],
+  ])("parses %p as %p", (value, expected) => {
+    expect(parseDraftOnlyMode(value)).toBe(expected);
+  });
+
+  it("allows create-product plus the full read-only allowlist, blocks everything else", () => {
+    const register = jest.fn((name: string) => `registered:${name}`);
+    const server = { tool: register };
+
+    applyDraftOnlyToolAccessPolicy(server, true);
+
+    expect(server.tool("create-product")).toBe("registered:create-product");
+    expect(server.tool("products")).toBe("registered:products");
+    expect(server.tool("get-inventory-levels")).toBe(
+      "registered:get-inventory-levels",
+    );
+
+    expect(server.tool("update-product")).toBeUndefined();
+    expect(server.tool("delete-product")).toBeUndefined();
+    expect(server.tool("bulk-delete-products")).toBeUndefined();
+    expect(server.tool("bulk-update-products")).toBeUndefined();
+    expect(server.tool("create-draft-order")).toBeUndefined();
+    expect(server.tool("complete-draft-order")).toBeUndefined();
+  });
+
+  it("blocks unknown future tools by default in draft-only mode", () => {
+    const register = jest.fn((name: string) => name);
+    const server = { tool: register };
+
+    applyDraftOnlyToolAccessPolicy(server, true);
+
+    expect(server.tool("future-tool-not-yet-classified")).toBeUndefined();
+  });
+
+  it("does not alter tool registration when disabled", () => {
+    const register = jest.fn((name: string) => `registered:${name}`);
+    const server = { tool: register };
+
+    applyDraftOnlyToolAccessPolicy(server, false);
+
+    expect(server.tool("delete-product")).toBe("registered:delete-product");
+  });
+
+  it("P0_DRAFT_ONLY_TOOL_NAMES is exactly the read-only allowlist plus create-product", () => {
+    expect(P0_DRAFT_ONLY_TOOL_NAMES.has("create-product")).toBe(true);
+    for (const name of READ_ONLY_TOOL_NAMES) {
+      expect(P0_DRAFT_ONLY_TOOL_NAMES.has(name)).toBe(true);
+    }
+    expect(P0_DRAFT_ONLY_TOOL_NAMES.size).toBe(READ_ONLY_TOOL_NAMES.size + 1);
   });
 });
